@@ -1,0 +1,349 @@
+---
+title: "Confidence Intervals"
+subtitle: "It's What's in Between"
+author: "James Hunter"
+date: "7 November 2019"
+institute: jameshunterbr@gmail.com
+output: binb::metropolis
+toc: true
+---
+
+
+```{r setup, include=FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::knit_hooks$set(mysize = function(before, options, envir) {
+  if (before) 
+    return(options$size)
+})
+librarian::shelf(tidyverse, ggpubr, scales, hrbrthemes, summarytools,  
+                 janitor, moderndive, infer)
+options(scipen = 999)
+new_uchic <- ggsci::pal_uchicago("default")(10)[1:10]
+```
+
+# Introduction
+
+## 
+
+- Last year: **p-values**
+  - Use and abuse
+  - Is $\alpha$ = 0.05 a reasonable standard to use?
+   
+- This year: **confidence intervals**
+  - Define them
+  - Show how to calculate a simple CI
+  - Evaluate their use and abuse
+
+# First, a Step Backward
+
+## Description vs. Inference
+
+- We can do 2 things with data
+  - *Describe* it
+  - Draw *inferences* about populations based on it
+
+- The data we normally collect represents a **sample** of a population
+  - a subgroup
+  - We can describe this
+
+- To draw inferences, we need to know what the population is we want to study
+
+- A distinction with a very great difference
+  - That most people forget or never learned
+
+## Example coming from the ever popular "Reviewer #2"
+
+- A study of co-infection of Chikungunya and Dengue in Tocantins
+  -  Textual description of how many patients were in each of the 4 groups being studied
+    - CHIK mono infected
+    - DENV-1 mono infected
+    - DENV-2 mono infected
+    - Coinfected
+  
+```{r chik_data, include = FALSE}
+load("C:/Users/james/OneDrive/Documents/Arbovirus Shirley/robson_master_data.Rdata")
+```
+  
+## Data Involved
+
+```{r arbo_data, echo = FALSE, warning = FALSE}
+master %>% 
+  mutate(bank = fct_recode(bank, CHIKV = "Chik", Coinfect = "coinf")) %>%
+  tabyl(bank) %>% 
+  mutate(percent = percent(percent, accuracy = 0.01)) %>% 
+  arrange(desc(n)) %>% 
+  adorn_totals(name = "TOTAL") %>% 
+  knitr::kable()
+
+```
+
+## Reviewer 2 Gets in the Act
+
+> Prevalence rates of Chikungunya virus infection and Coinfection with Dengue virus should be estimate [*sic*] using CI 95%.
+
+- Prevalence rates??
+  - What's the base for the prevalence?
+
+- CI assumes we are making an inference about some population -- *which population*?
+
+- The numbers as a description without CI's or p-values were just fine.
+
+- Problem extends to most of the Table 1's we see in papers
+  - Simple descriptions of the sample are pushed by editors and reviewers into meaningless p-values and confidence intervals
+  
+##  
+
+I will show a workaround to satisfy Reviewer 2 even when we don't know why we're doing a confidence interval
+
+# Theory of Confidence Intervals
+
+## Some Basic Definitions
+
+- *Population Parameter*: 
+  - A summary measure representing the true population value for the measure
+  - Example: population mean ($\mu$), a measure of the central tendency of a continuous variable
+
+- *Sample Statistic*: 
+  - A point estimate of the population parameter based on the values of a sample from the population
+  - Example: sample mean ($\bar{x}$), a number calculated from the values of the sample under study
+  
+- *Standard Error*: 
+  - The standard deviation of the sampling distribution 
+  - Measure of uncertainty associated with point estimate
+  - i.e., the standard deviation of all the possible means of the distribution of values in our sample
+  
+## Objective of Using These Quantities
+
+- Have our point estimate (sample statistic) exactly match the population parameter
+- Not going to happen
+  - Except in extremely rare random (i.e., lucky) cases
+
+## What is a Confidence Interval?
+
+- **"A plausible range of values for the population parameter"**
+  - Diez, Barr, Cetinkaya-Rundel, **OpenIntro Statistics** (and others who have copied from their open source work)
+  
+## Fishing Metaphor (credit to Diez, Barr, Cetinkaya-Rundel)
+
+- Trying to hit the population parameter with a point estimate (sample statistic) is like fishing with a spear
+  - Very unlikely to hit the target
+
+- Using a confidence interval is like fishing with a net
+  - Much more likely to capture the fish (population parameter value) in the range that the interval covers
+  
+## Better than a p-value?
+
+- Expressed in the same units as the statistic and the parameter 
+  - Easier to interpret than a p-value
+
+- Represents a range of values in which the parameter could fall
+  - Shows a bit of humility about your powers of inference
+  
+# An Example Using an Invented Data Set
+
+##
+
+- Objective: replicate process of looking at all potential samples of a population
+
+- We have 50 coins and we know the year they were minted
+
+- Add a variable (`yrs`) that is number of years since minting of the coin
+
+```{r sample_coins, echo = FALSE}
+ps <- pennies_sample %>% 
+  mutate(yrs = 2019 - year)
+head(ps)
+```
+
+## Show Statistics for This Sample
+
+```{r eda_coins, echo = FALSE}
+stat_list <-  c("mean", "sd", "min", "q1", "med", "q3", "max")
+ps %>% 
+  select(yrs) %>% 
+  descr(stats = stat_list)
+x_bar <- mean(ps$yrs)
+```
+
+## Histogram of Data
+
+```{r coin_histo, echo = FALSE}
+ggplot(ps, aes(x = yrs)) +
+  geom_histogram(bins = 10, color = "white") +
+  labs(title = "Distribution of Age of Coins in 2019")
+```
+
+## Bootstrap Resampling
+
+- We can't go out and get the mint year of all the coins in the U.S.
+- However, we can take many, **many** samples of the coins we do know about
+- **Bootstrapping**
+- Technique invented at Stanford in 1980's
+- Proofs that effectively imitates drawing samples of unkown coins 
+- We are going to make 1,000 resamples of our set of coins
+- Sampling will be done with replacement
+  - This means that when we draw a coin, we put it back so it can be drawn again
+  - Coins can repeat within a given sample
+
+## One Resample
+
+```{r resample, echo = FALSE, mysize=TRUE, size='\\scriptsize'}
+set.seed(42)
+resamp1 <- ps %>%
+  rep_sample_n(size = 50, replace = TRUE, reps = 1)  
+head(resamp1, 15)
+```
+
+## Statistics for Our Resample Compared to Statistics for Original Sample
+
+```{r stats_resamp, echo = FALSE, mysize=TRUE, size='\\scriptsize'}
+ps %>% 
+  select(yrs) %>% 
+  descr(stats = c("mean", "sd"))
+
+resamp1 %>% 
+  ungroup() %>% 
+  select(yrs) %>% 
+  descr(stats = c("mean", "sd"))
+```
+
+## Differences among 6 Samples
+
+```{r six_samples, echo = FALSE}
+six_bootstrap_samples <- ps %>% 
+  rep_sample_n(size = 50, replace = TRUE, reps = 6)
+
+gghistogram(six_bootstrap_samples, x = "yrs", 
+            color = "black", fill = "darkgreen",
+            bins = 10, facet.by = "replicate",
+            add = "mean", ggtheme = theme_gray())
+ 
+```
+
+## Do the full 1,000 Resamples
+
+```{r full_resamp, echo = FALSE, message = FALSE, warning = FALSE, mysize=TRUE, size='\\scriptsize'}
+resamples <- ps %>% 
+  specify(response = yrs) %>% 
+  generate(reps = 1000) %>% 
+  calculate(stat = "mean")
+resamples
+```
+
+## Statistics for 1,000 Resamples
+
+```{r stats_full_resamp, echo = FALSE, message = FALSE, warning = FALSE, mysize=TRUE, size='\\scriptsize'}
+SE <- sd(resamples$stat)
+resamples %>%
+  select(stat) %>% 
+  descr(stats = c(stat_list, "n.valid"))
+```
+
+## Histogram of Means of Resamples
+
+```{r hist_resamples, echo = FALSE, message = FALSE, warning = FALSE}
+resamples %>% visualize(obs_stat = x_bar)
+```
+
+## Comparison of Means
+
+- Mean of Sample of 50 Coins = `r x_bar`
+
+- Means of 1,000 Means of Samples = `r round(mean(resamples$stat), 2)`
+
+# Constructing Confidence Intervals
+
+## We say we want a 95% confidence interval - which means ??
+
+> 95% of all the confidence intervals we can create will have the true population mean between the interval's lower and upper limits
+
+- How to determine the upper and lower limits that will enable this
+
+## Standard Error Method of Computing Confidence Interval
+
+$$ \bar{x}\pm SE*multiplier $$
+ 
+ - Information we need
+  - $\bar{x}$: mean from the *original* sample
+  - $SE$: standard deviation of mean of means of *bootstrap samples*
+  - $multiplier$: appropriate percentiles of standard normal distribution to cover 95% of the resamples 
+
+## Calculation of Confidence Interval
+
+- $\bar{x}$ = `r x_bar`
+- $SE$ = `r round(sd(resamples$stat), 3)`
+- $multiplier$ = approximately 2 (1.96 exactly)
+
+```{r calc_CI}
+lower_ci <- x_bar - (SE * 1.96)
+upper_ci <- x_bar + (SE * 1.96)
+```
+  
+- Confidence Interval is `r round(lower_ci, 2)` to `r round(upper_ci, 2)` 
+
+## Visualize Confidence Interval
+
+```{r vis_ci, echo = FALSE, warning = FALSE, message = FALSE}
+standard_error_ci <- resamples %>% 
+  get_ci(type = "se", point_estimate = x_bar)
+
+resamples %>% 
+  visualize(endpoints = standard_error_ci, direction = "between")
+
+```
+
+# Conclusion
+
+##
+
+- More flexible, interpretable tool to report inferences about population parameters
+- Needs to be applied in situations where inference is being undertaken rather than simple description
+  - Inference implies we are concerned about the nature of the distribution of values and where our sample data sit in an overall distribution
+  - Description is simply describing what you measured
+  
+# How to Deal with the CHIKV/DENV Problem
+
+##
+
+```{r arbo_data_2, echo = FALSE, warning = FALSE}
+master %>% 
+  mutate(bank = fct_recode(bank, CHIKV = "Chik", Coinfect = "coinf")) %>%
+  tabyl(bank) %>% 
+  mutate(percent = percent(percent, accuracy = 0.01)) %>% 
+  arrange(desc(n)) %>% 
+  adorn_totals(name = "TOTAL") %>% 
+  knitr::kable()
+```
+
+- To satisfy Reviewer 2, we can treat each of the categories as a proportion of the number of cases, which is similar to binomial (Yes/No, True/False, Heads/Tails) problems
+- Use the Binomial distribution, which calculates proportions and translate the results back to numbers
+
+## The Final Table
+
+```{r final_table, echo = FALSE, message = FALSE, mysize=TRUE, size='\\scriptsize'}
+types <- master %>%
+  group_by(bank) %>%
+  summarise(n = n())
+total_cases <- sum(types$n)
+ci <- binom::binom.asymp(types$n, total_cases, conf.level=0.95)
+ci <- ci %>%
+  mutate(bank = as.character(types$bank),
+  low_num = total_cases * lower,
+  hi_num = total_cases * upper) %>%
+  select(bank, cases = x, totalcases = n, proportion = mean,
+low_num, hi_num)
+ci
+```
+
+  
+  
+# Bioinformatics at EPM/UNIFESP
+
+## 
+
+- Center of Bioinformatics is in process of being established
+- Desire to meet with as many laboratories as possible to find out
+  - What kinds of techniques you are using
+  - What you would like to be doing with data
+  - What your frustrations with computation and biostatistics are
+- My post-doc is focused this year on assisting in getting the Center up and running
